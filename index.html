@@ -105,8 +105,8 @@ nav.solid{background:rgba(0, 0, 0, 0.97);backdrop-filter:blur(20px);box-shadow:0
 .h-right{position:relative;overflow:hidden;background:var(--off-2)}
 .h-photo-wrap{position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:center}
 .h-photo-bg{position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:75%;height:90%;background:linear-gradient(to top,var(--gold) 0%,var(--gold-hi) 30%,transparent 100%);opacity:.12;border-radius:200px 200px 0 0}
-.h-photo-placeholder{position:relative;z-index:2;width:100%;height:100%;display:flex;align-items:center;justify-content:center}
-.h-photo-placeholder svg{width:55%;height:auto;opacity:.12}
+.h-photo-placeholder{position:relative;z-index:2;width:100%;height:100%;display:flex;align-items:flex-end;justify-content:center}
+.h-candidate-photo{width:100%;height:100%;object-fit:cover;object-position:top center;display:block}
 .h-photo-label{position:absolute;bottom:40px;left:40px;z-index:3}
 .h-photo-label .hl-tag{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:5px;color:var(--muted);text-transform:uppercase;margin-bottom:8px}
 .h-photo-label .hl-name{font-family:'Anton',sans-serif;font-size:28px;letter-spacing:2px;color:var(--ink);line-height:1}
@@ -314,7 +314,13 @@ footer{background:var(--ink);padding:80px 48px 44px}
 /* ════ RESPONSIVE ════ */
 @media(max-width:1024px){
   #hero{grid-template-columns:1fr;min-height:auto}
-  .h-right{display:none}
+  .h-right{display:block;width:100%;height:60vw;max-height:520px;min-height:320px;border-right:none;border-bottom:1px solid var(--border);order:-1}
+  .h-photo-wrap{position:relative;width:100%;height:100%}
+  .h-candidate-photo{width:100%;height:100%;object-fit:cover;object-position:top center}
+  .h-photo-bg{display:none}
+  .h-badge{top:20px;right:20px;width:70px;height:70px}
+  .h-photo-label{bottom:20px;left:20px}
+  .h-photo-label .hl-name{font-size:20px}
   .ab-grid,.vis-layout,.mf-layout,.mv-top,.ft-grid{grid-template-columns:1fr;gap:48px}
   .tr-grid{grid-template-columns:1fr 1fr}
   .st-grid{grid-template-columns:1fr 1fr;padding:56px 28px;gap:32px}
@@ -338,6 +344,7 @@ footer{background:var(--ink);padding:80px 48px 44px}
   #intro-strip{padding:60px 24px}
 }
 @media(max-width:480px){
+  .h-right{height:75vw;max-height:380px}
   .h-actions{flex-direction:column;width:100%}
   .btn-p,.btn-g{text-align:center}
   .m-box{padding:36px 22px}
@@ -406,7 +413,7 @@ footer{background:var(--ink);padding:80px 48px 44px}
   <div class="h-left">
     <div class="h-eyebrow">Great Ife Students' Union · OAU</div>
     <h1 class="h-welcome">WELCOME,</h1>
-    <p class="h-name-line">I'M <em>AROGS</em></p>
+    <p class="h-name-line">I'M <em>AROGUNDADE ABDULROHEEM, AROGS</em></p>
     <p class="h-candidate">A <strong>proven record</strong>. A vision built on <strong>service, not slogans</strong>. A movement that belongs to every student, because every student matters. Join us to make IMPACT.</p>
     <div class="h-actions">
       <a href="#track" class="btn-p">See The Record</a>
@@ -430,17 +437,11 @@ footer{background:var(--ink);padding:80px 48px 44px}
     </div>
   </div>
 
-  <!-- RIGHT COLUMN — photo placeholder -->
+  <!-- RIGHT COLUMN — candidate photo -->
   <div class="h-right">
     <div class="h-photo-bg"></div>
     <div class="h-photo-placeholder">
-      <!-- Replace this SVG with an <img> tag pointing to candidate's photo -->
-      <svg viewBox="0 0 200 280" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <ellipse cx="100" cy="90" rx="52" ry="52" fill="#D4A017" opacity=".15"/>
-        <ellipse cx="100" cy="90" rx="36" ry="36" fill="#D4A017" opacity=".12"/>
-        <path d="M30 280 C30 200 170 200 170 280" fill="#D4A017" opacity=".08"/>
-        <text x="100" y="200" text-anchor="middle" font-family="Anton,sans-serif" font-size="11" fill="#888" letter-spacing="3"><img src="image0 (5).jpeg" width="80%" style="filter: brightness(55%)";></text>
-      </svg>
+      <img src="image0 (5).jpeg" alt="Arogs — The Candidate" class="h-candidate-photo"/>
     </div>
     <div class="h-photo-label">
       <div class="hl-tag">The Candidate</div>
