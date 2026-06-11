@@ -1,16 +1,13 @@
 // ── AROGS CAMPAIGN — app.js ──
-// Configuration — replace with your real values
 
 const CONFIG = {
   supabaseUrl: 'https://tpteskmuuutobzkegors.supabase.co',
   supabaseKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRwdGVza211dXV0b2J6a2Vnb3JzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMDA2OTgsImV4cCI6MjA5NDg3NjY5OH0.6meW7ZwgSnIqv-rb3w7G5X-5GapjMCERacfUhhkc5hM',
-  vapidPublicKey: 'BH30i8o7XH-m6scXQXvICqgVzpBHATLfBjGfvwfUDDf_VjSxJylzSvojOgyvCSwMmSDzb5cxc6OlquyWzsr8qLQ',
-  // FIX 1: Added https:// — without the protocol, fetch() throws a TypeError and
-  // the push subscription NEVER reaches the backend server.
+  vapidPublicKey: 'BJTXftjErgkU9Qgdfudu2wnpa52aH0r3h_X-xfZIxoJGOYGCfasNc5h6TF6lpR_a4iXK4KGVZBYRj4nZ7lpovu8',
   serverUrl: 'https://campaignweb-production.up.railway.app'
 };
 
-// ── SUPABASE CLIENT (CDN-free inline version) ──
+// ── SUPABASE HELPERS ──
 async function supabaseInsert(table, record) {
   const res = await fetch(`${CONFIG.supabaseUrl}/rest/v1/${table}`, {
     method: 'POST',
@@ -37,15 +34,12 @@ async function supabaseSelect(table, params = '') {
   return res.json();
 }
 
-// ── SERVICE WORKER REGISTRATION ──
+// ── SERVICE WORKER ──
 async function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return null;
   try {
     const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
-    console.log('[SW] Registered:', reg.scope);
-    // FIX 2: Wait for the service worker to become active before trying to
-    // subscribe to push. Without this, pushManager.subscribe() can fail with
-    // "InvalidStateError" because the SW isn't ready yet.
+    // Wait for SW to become active before subscribing to push
     if (reg.installing || reg.waiting) {
       await new Promise(resolve => {
         const sw = reg.installing || reg.waiting;
@@ -75,35 +69,86 @@ function urlBase64ToUint8Array(base64String) {
 // ── PUSH SUBSCRIPTION ──
 async function subscribeToPush(registration) {
   try {
-    // Check if already subscribed — reuse existing subscription instead of
-    // creating a duplicate, which would break the stored endpoint on the server.
     const existing = await registration.pushManager.getSubscription();
     if (existing) return existing;
-
-    const sub = await registration.pushManager.subscribe({
+    return await registration.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(CONFIG.vapidPublicKey)
     });
-    return sub;
   } catch (err) {
     console.error('[Push] Subscription failed:', err);
     return null;
   }
 }
 
-// ── SAVE SUPPORTER TO SUPABASE ──
-async function saveSupporter({ email, phone, pushSubscription }) {
+// ── SAVE SUPPORTER ──
+// Sends to backend (which handles push + saves to Supabase),
+// then also saves directly to Supabase as a safety fallback.
+async function saveToBackend(email, phone, pushSub) {
+  try {
+    const res = await fetch(`${CONFIG.serverUrl}/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subscription: pushSub ? pushSub.toJSON() : null,
+        email: email || null,
+        phone: phone || null
+      })
+    });
+    if (!res.ok) console.error('[Backend] /subscribe error:', await res.text());
+    return res.ok;
+  } catch (e) {
+    console.error('[Backend] Could not reach server:', e.message);
+    return false;
+  }
+}
+
+async function saveToSupabase(email, phone, pushSub) {
+  // FIX: Never include email key when it's empty — avoids NULL unique
+  // constraint violations that silently blocked mobile users from saving.
   const record = {
-    email: email || null,
     phone: phone || null,
-    push_subscription: pushSubscription ? JSON.stringify(pushSubscription) : null,
+    push_subscription: pushSub ? JSON.stringify(pushSub.toJSON()) : null,
     joined_at: new Date().toISOString(),
-    notifications_enabled: !!pushSubscription
+    notifications_enabled: !!pushSub
   };
+  if (email) record.email = email;
   return supabaseInsert('supporters', record);
 }
 
-// ── MODAL LOGIC ──
+// ── FULL SUBSCRIBE FLOW (shared by modal + enable button) ──
+async function runSubscribeFlow(email, phone, feedbackEl) {
+  const setMsg = (msg, color = 'var(--gold)') => {
+    if (feedbackEl) { feedbackEl.textContent = msg; feedbackEl.style.color = color; }
+  };
+
+  setMsg('Joining the movement...');
+
+  const reg = await registerServiceWorker();
+  let pushSub = null;
+
+  if (reg && 'Notification' in window) {
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+      pushSub = await subscribeToPush(reg);
+    } else {
+      setMsg('⚠️ Notifications blocked. Enable them in browser settings.', '#e05555');
+    }
+  }
+
+  // Save to backend first, then Supabase as fallback
+  const backendOk = await saveToBackend(email, phone, pushSub);
+  if (!backendOk) {
+    // Backend failed — save directly to Supabase so data isn't lost
+    await saveToSupabase(email, phone, pushSub);
+  }
+
+  markJoined();
+  setMsg('✓ You\'re part of the movement!');
+  return pushSub;
+}
+
+// ── MODAL ──
 window.handleModalYes = async function() {
   const email = document.getElementById('modal-email').value.trim();
   const phone = document.getElementById('modal-phone').value.trim();
@@ -113,75 +158,133 @@ window.handleModalYes = async function() {
     feedback.textContent = 'Please enter at least your email or phone number.';
     return;
   }
-
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     feedback.textContent = 'Please enter a valid email address.';
     return;
   }
 
-  feedback.textContent = 'Joining the movement...';
-  feedback.style.color = 'var(--gold)';
-
   try {
-    // 1. Register service worker (and wait for it to activate)
-    const reg = await registerServiceWorker();
-    let pushSub = null;
-
-    // 2. Request notification permission & subscribe
-    if (reg && 'Notification' in window) {
-      const permission = await Notification.requestPermission();
-      if (permission === 'granted') {
-        pushSub = await subscribeToPush(reg);
-
-        // 3. Send subscription to backend server
-        // FIX 3: The original code silently caught backend errors and fell through
-        // to saveSupporter() which would then write to Supabase WITHOUT the push
-        // subscription (because pushSub was never confirmed stored on the server).
-        // Now we surface backend errors clearly so you can debug them.
-        if (pushSub) {
-          try {
-            const backendRes = await fetch(`${CONFIG.serverUrl}/subscribe`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ subscription: pushSub.toJSON(), email, phone })
-            });
-            if (!backendRes.ok) {
-              const errText = await backendRes.text();
-              console.error('[Backend] /subscribe failed:', errText);
-            }
-          } catch(e) {
-            console.error('[Backend] Could not reach server:', e.message);
-          }
-        }
-      } else {
-        feedback.textContent = '⚠️ Notifications blocked. You can enable them in browser settings.';
-        feedback.style.color = '#e05555';
-      }
-    }
-
-    // 4. Save to Supabase directly as well (dual-write for safety)
-    await saveSupporter({ email, phone, pushSubscription: pushSub });
-
-    // 5. Mark joined, close modal & show welcome
-    markJoined();
-    feedback.textContent = '✓ You\'re part of the movement!';
-    feedback.style.color = 'var(--gold)';
+    await runSubscribeFlow(email, phone, feedback);
     setTimeout(() => {
       document.getElementById('modal-overlay').classList.add('hidden');
       showToast('Welcome to the IMPACT Movement! Arogs thanks you for joining.', 5000);
       loadSupporterCount();
+      updateNotifButton();
     }, 1200);
-
   } catch (err) {
-    console.error('Error joining:', err);
+    console.error('Modal error:', err);
     feedback.textContent = '⚠️ Something went wrong. Please try again.';
     feedback.style.color = '#e05555';
   }
 };
 
-// ── TOAST NOTIFICATION ──
+window.handleModalNo = function() {
+  markJoined();
+  document.getElementById('modal-overlay').classList.add('hidden');
+};
+
+// ── ENABLE NOTIFICATIONS BUTTON ──
+// Injected into the page for users who missed or dismissed the modal.
+function injectNotifButton() {
+  // Don't inject if already there
+  if (document.getElementById('notif-enable-btn')) return;
+
+  const btn = document.createElement('button');
+  btn.id = 'notif-enable-btn';
+  btn.innerHTML = '🔔 Enable Notifications';
+  btn.style.cssText = `
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 9999;
+    background: #C9A84C;
+    color: #000;
+    border: none;
+    border-radius: 50px;
+    padding: 12px 22px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 4px 20px rgba(201,168,76,0.4);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: opacity 0.3s, transform 0.3s;
+  `;
+
+  btn.addEventListener('mouseenter', () => btn.style.transform = 'scale(1.05)');
+  btn.addEventListener('mouseleave', () => btn.style.transform = 'scale(1)');
+
+  btn.addEventListener('click', async () => {
+    btn.innerHTML = '⏳ Enabling...';
+    btn.disabled = true;
+
+    try {
+      // If they haven't given email/phone yet, ask for email inline
+      let email = localStorage.getItem('arogs_email') || '';
+      let phone = localStorage.getItem('arogs_phone') || '';
+
+      if (!email && !phone) {
+        email = prompt('Enter your email to receive updates (optional):') || '';
+        phone = prompt('Enter your phone number (optional):') || '';
+        if (email) localStorage.setItem('arogs_email', email);
+        if (phone) localStorage.setItem('arogs_phone', phone);
+      }
+
+      const pushSub = await runSubscribeFlow(email, phone, null);
+
+      if (pushSub) {
+        btn.innerHTML = '✅ Notifications Enabled!';
+        btn.style.background = '#2a9d2a';
+        setTimeout(() => btn.remove(), 3000);
+        showToast('You\'ll now receive updates from Arogs!', 4000);
+      } else {
+        btn.innerHTML = '⚠️ Could not enable — check browser settings';
+        btn.style.background = '#c0392b';
+        btn.style.color = '#fff';
+        setTimeout(() => {
+          btn.innerHTML = '🔔 Enable Notifications';
+          btn.style.background = '#C9A84C';
+          btn.style.color = '#000';
+          btn.disabled = false;
+        }, 4000);
+      }
+    } catch (e) {
+      console.error('Enable notif error:', e);
+      btn.innerHTML = '🔔 Enable Notifications';
+      btn.disabled = false;
+    }
+  });
+
+  document.body.appendChild(btn);
+}
+
+// Show/hide the button based on current subscription state
+async function updateNotifButton() {
+  const reg = await navigator.serviceWorker.getRegistration().catch(() => null);
+  if (!reg) return;
+
+  const sub = await reg.pushManager.getSubscription().catch(() => null);
+  const permission = Notification.permission;
+
+  const btn = document.getElementById('notif-enable-btn');
+
+  // Hide button if already subscribed
+  if (sub && permission === 'granted') {
+    if (btn) btn.remove();
+    return;
+  }
+
+  // Show button if not subscribed and not permanently denied
+  if (permission !== 'denied') {
+    injectNotifButton();
+  }
+}
+
+// ── TOAST ──
 function showToast(msg, duration = 4000) {
   const toast = document.getElementById('notif-toast');
+  if (!toast) return;
   document.getElementById('toast-msg').textContent = msg;
   toast.classList.add('show');
   setTimeout(() => toast.classList.remove('show'), duration);
@@ -213,7 +316,6 @@ function setupScrollReveal() {
       }
     });
   }, { threshold: 0.1, rootMargin: '0px 0px -60px 0px' });
-
   document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
 }
 
@@ -222,53 +324,43 @@ function setupCountAnimation() {
   const observer = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
       if (entry.isIntersecting) {
-        const els = entry.target.querySelectorAll('[data-target]');
-        els.forEach(el => {
-          const target = parseInt(el.dataset.target);
-          animateCountUp(el, target);
+        entry.target.querySelectorAll('[data-target]').forEach(el => {
+          animateCountUp(el, parseInt(el.dataset.target));
         });
         observer.unobserve(entry.target);
       }
     });
   }, { threshold: 0.3 });
-
   const impactSection = document.getElementById('impact');
   if (impactSection) observer.observe(impactSection);
 }
 
-// ── LOAD SUPPORTER COUNT FROM SUPABASE ──
+// ── SUPPORTER COUNT ──
 async function loadSupporterCount() {
   try {
-    const res = await fetch(
-      `${CONFIG.supabaseUrl}/rest/v1/supporters?select=id`,
-      {
-        headers: {
-          'apikey': CONFIG.supabaseKey,
-          'Authorization': `Bearer ${CONFIG.supabaseKey}`,
-          'Prefer': 'count=exact',
-          'Range': '0-0'
-        }
+    const res = await fetch(`${CONFIG.supabaseUrl}/rest/v1/supporters?select=id`, {
+      headers: {
+        'apikey': CONFIG.supabaseKey,
+        'Authorization': `Bearer ${CONFIG.supabaseKey}`,
+        'Prefer': 'count=exact',
+        'Range': '0-0'
       }
-    );
+    });
     const range = res.headers.get('Content-Range');
     const count = range ? parseInt(range.split('/')[1]) : 0;
-
     const el = document.getElementById('supporter-count');
     if (el) animateCountUp(el, Math.max(count, 47), 1500);
-
     loadSupporterTags();
   } catch (err) {
-    console.warn('Could not load supporter count:', err);
     const el = document.getElementById('supporter-count');
     if (el) animateCountUp(el, 47, 1500);
   }
 }
 
-// ── LOAD SUPPORTER TAGS (anonymized) ──
+// ── SUPPORTER TAGS ──
 async function loadSupporterTags() {
   const tagContainer = document.getElementById('supporter-tags');
   if (!tagContainer) return;
-
   const seedTags = [
     'A.O. — 100L Medicine', 'T.A. — 200L Law', 'K.I. — 300L Engineering',
     'F.B. — 400L Sciences', 'O.M. — 100L Social Sci', 'A.T. — 200L Education',
@@ -279,24 +371,20 @@ async function loadSupporterTags() {
     'L.O. — 100L Agriculture', 'V.A. — 200L Arts', 'U.M. — 300L Social Sci',
     'Q.B. — 400L Pharmacy', 'W.T. — 100L Technology', 'X.O. — 200L Sciences',
   ];
-
   try {
     const data = await supabaseSelect('supporters', 'select=email,phone,joined_at&order=joined_at.desc&limit=50');
     const tags = data.map(s => {
       const name = s.email ? s.email.split('@')[0].substring(0, 6) + '...' : 'Anon';
       return `<div class="stag">${name}</div>`;
     });
-    if (tags.length > 0) {
-      tagContainer.innerHTML = tags.join('') + seedTags.map(t => `<div class="stag">${t}</div>`).join('');
-    } else {
-      throw new Error('No data');
-    }
+    tagContainer.innerHTML = (tags.length > 0 ? tags.join('') : '') +
+      seedTags.map(t => `<div class="stag">${t}</div>`).join('');
   } catch {
     tagContainer.innerHTML = seedTags.map(t => `<div class="stag">${t}</div>`).join('');
   }
 }
 
-// ── NAV SCROLL EFFECT ──
+// ── NAV ──
 function setupNav() {
   const nav = document.querySelector('nav');
   if (!nav) return;
@@ -311,22 +399,16 @@ function setupNav() {
   });
 }
 
-// ── SESSION HELPERS ──
+// ── SESSION ──
 function shouldShowModal() {
   return !localStorage.getItem('arogs_impact_joined');
 }
-
 function markJoined() {
   localStorage.setItem('arogs_impact_joined', '1');
 }
 
-window.handleModalNo = function() {
-  markJoined();
-  document.getElementById('modal-overlay').classList.add('hidden');
-};
-
 // ── INIT ──
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   if (!shouldShowModal()) {
     const overlay = document.getElementById('modal-overlay');
     if (overlay) overlay.classList.add('hidden');
@@ -337,6 +419,9 @@ document.addEventListener('DOMContentLoaded', () => {
   setupNav();
   loadSupporterCount();
 
-  // Register SW on every page load so returning visitors still receive pushes
-  registerServiceWorker();
+  // Register SW on every load so returning visitors stay subscribed
+  await registerServiceWorker();
+
+  // Show enable-notifications button to anyone not yet subscribed
+  updateNotifButton();
 });
