@@ -849,28 +849,80 @@ if(wall)wall.innerHTML=seeds.map(s=>`<div class="stag">${s}</div>`).join('');
 function showToast(msg,dur=5000){const t=document.getElementById('toast');document.getElementById('toast-msg').textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),dur);}
 
 /* ── MODAL ── */
+const _SUPA_URL='https://tpteskmuuutobzkegors.supabase.co';
+const _SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRwdGVza211dXV0b2J6a2Vnb3JzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMDA2OTgsImV4cCI6MjA5NDg3NjY5OH0.6meW7ZwgSnIqv-rb3w7G5X-5GapjMCERacfUhhkc5hM';
+const _SERVER='https://campaignweb-production.up.railway.app';
+const _VAPID='BJTXftjErgkU9Qgdfudu2wnpa52aH0r3h_X-xfZIxoJGOYGCfasNc5h6TF6lpR_a4iXK4KGVZBYRj4nZ7lpovu8';
+
+function _b64(b){const p='='.repeat((4-b.length%4)%4);const s=(b+p).replace(/-/g,'+').replace(/_/g,'/');return Uint8Array.from([...atob(s)].map(c=>c.charCodeAt(0)));}
+
 function shouldShow(){return!localStorage.getItem('arogs_j')}
 window.modalNo=function(){localStorage.setItem('arogs_j','1');document.getElementById('modal').classList.add('gone');};
+
 window.modalYes=async function(){
   const em=document.getElementById('m-email').value.trim();
   const ph=document.getElementById('m-phone').value.trim();
   const fb=document.getElementById('m-fb');
   if(!em&&!ph){fb.textContent='↳ Please enter your email or phone number.';return;}
   if(em&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)){fb.textContent='↳ Please enter a valid email address.';return;}
-  fb.textContent='Joining the movement...';
+  fb.textContent='Joining the movement...';fb.style.color='var(--gold-lo)';
   localStorage.setItem('arogs_j','1');
+
+  let pushSub=null;
   try{
-    fb.style.color='var(--gold-lo)';fb.textContent='✓ You are part of the movement.';
-    setTimeout(()=>{
-      document.getElementById('modal').classList.add('gone');
-      showToast('Welcome to the IMPACT movement. Arogs thanks you for joining.');
-      const mc=document.getElementById('mvCount');
-      if(mc)countUp(mc,parseInt(mc.textContent.replace(/\D/g,''))+1,700);
-    },1300);
-  }catch(e){fb.style.color='#cc0000';fb.textContent='Something went wrong. Please try again.';}
+    // 1. Register service worker
+    if('serviceWorker' in navigator){
+      const reg=await navigator.serviceWorker.register('/sw.js',{scope:'/'});
+      // Wait for SW to activate
+      if(reg.installing||reg.waiting){
+        await new Promise(res=>{
+          const sw=reg.installing||reg.waiting;
+          sw.addEventListener('statechange',function h(e){if(e.target.state==='activated'){sw.removeEventListener('statechange',h);res();}});
+        });
+      }
+      // 2. Request notification permission
+      if('Notification' in window){
+        const perm=await Notification.requestPermission();
+        if(perm==='granted'){
+          // 3. Get or create push subscription
+          const existing=await reg.pushManager.getSubscription();
+          pushSub=existing||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_b64(_VAPID)});
+        }
+      }
+    }
+  }catch(swErr){console.error('[SW/Push]',swErr);}
+
+  // 4. Save to backend (sends welcome push + saves to DB)
+  try{
+    const r=await fetch(`${_SERVER}/subscribe`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({subscription:pushSub?pushSub.toJSON():null,email:em||null,phone:ph||null})
+    });
+    if(!r.ok)throw new Error(await r.text());
+  }catch(backendErr){
+    console.error('[Backend]',backendErr);
+    // 5. Fallback — save directly to Supabase if backend fails
+    try{
+      const rec={phone:ph||null,push_subscription:pushSub?JSON.stringify(pushSub.toJSON()):null,joined_at:new Date().toISOString(),notifications_enabled:!!pushSub};
+      if(em)rec.email=em;
+      await fetch(`${_SUPA_URL}/rest/v1/supporters`,{
+        method:'POST',
+        headers:{'Content-Type':'application/json','apikey':_SUPA_KEY,'Authorization':`Bearer ${_SUPA_KEY}`,'Prefer':'return=representation'},
+        body:JSON.stringify(rec)
+      });
+    }catch(supaErr){console.error('[Supabase fallback]',supaErr);}
+  }
+
+  fb.style.color='var(--gold-lo)';fb.textContent='✓ You are part of the movement.';
+  setTimeout(()=>{
+    document.getElementById('modal').classList.add('gone');
+    showToast('Welcome to the IMPACT movement. Arogs thanks you for joining.');
+    const mc=document.getElementById('mvCount');
+    if(mc)countUp(mc,parseInt(mc.textContent.replace(/\D/g,''))+1,700);
+  },1300);
 };
 if(!shouldShow())document.getElementById('modal').classList.add('gone');
 </script>
-<script src="/app.js"></script>
 </body>
 </html>
