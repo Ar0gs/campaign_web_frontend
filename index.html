@@ -856,8 +856,23 @@ const _VAPID='BJTXftjErgkU9Qgdfudu2wnpa52aH0r3h_X-xfZIxoJGOYGCfasNc5h6TF6lpR_a4i
 
 function _b64(b){const p='='.repeat((4-b.length%4)%4);const s=(b+p).replace(/-/g,'+').replace(/_/g,'/');return Uint8Array.from([...atob(s)].map(c=>c.charCodeAt(0)));}
 
-function shouldShow(){return!localStorage.getItem('arogs_j')}
-window.modalNo=function(){localStorage.setItem('arogs_j','1');document.getElementById('modal').classList.add('gone');};
+// Only treat someone as "already handled" if they truly have an active
+// push subscription right now — not just because they clicked a button once.
+// This fixes the bug where the modal silently stopped showing on mobile
+// after one click, even if notifications were never actually enabled
+// (e.g. iOS Safari before the site is added to Home Screen).
+async function hasActiveSubscription(){
+  try{
+    if(!('serviceWorker' in navigator))return false;
+    const reg=await navigator.serviceWorker.getRegistration();
+    if(!reg)return false;
+    const sub=await reg.pushManager.getSubscription();
+    return !!sub && Notification.permission==='granted';
+  }catch(e){return false;}
+}
+
+function shouldShow(){return!localStorage.getItem('arogs_j')&&!sessionStorage.getItem('arogs_skip_session')}
+window.modalNo=function(){sessionStorage.setItem('arogs_skip_session','1');document.getElementById('modal').classList.add('gone');};
 
 window.modalYes=async function(){
   const em=document.getElementById('m-email').value.trim();
@@ -866,7 +881,6 @@ window.modalYes=async function(){
   if(!em&&!ph){fb.textContent='↳ Please enter your email or phone number.';return;}
   if(em&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)){fb.textContent='↳ Please enter a valid email address.';return;}
   fb.textContent='Joining the movement...';fb.style.color='var(--gold-lo)';
-  localStorage.setItem('arogs_j','1');
 
   let pushSub=null;
   try{
@@ -915,6 +929,12 @@ window.modalYes=async function(){
   }
 
   fb.style.color='var(--gold-lo)';fb.textContent='✓ You are part of the movement.';
+  // Only mark as permanently "joined" if we got a real push subscription,
+  // OR the browser doesn't support push at all (nothing more we can offer them).
+  // If push silently failed (e.g. iOS not yet added to Home Screen), leave the
+  // flag unset so the modal/notif prompt can try again on their next visit.
+  const pushSupported='serviceWorker' in navigator && 'PushManager' in window;
+  if(pushSub||!pushSupported){localStorage.setItem('arogs_j','1');}
   setTimeout(()=>{
     document.getElementById('modal').classList.add('gone');
     showToast('Welcome to the IMPACT movement. Arogs thanks you for joining.');
@@ -922,7 +942,19 @@ window.modalYes=async function(){
     if(mc)countUp(mc,parseInt(mc.textContent.replace(/\D/g,''))+1,700);
   },1300);
 };
-if(!shouldShow())document.getElementById('modal').classList.add('gone');
+(async()=>{
+  if(!shouldShow()){
+    document.getElementById('modal').classList.add('gone');
+    return;
+  }
+  // Edge case: flag isn't set, but they already have a real subscription
+  // (e.g. they joined before this fix shipped). Don't bother them again.
+  if(await hasActiveSubscription()){
+    localStorage.setItem('arogs_j','1');
+    document.getElementById('modal').classList.add('gone');
+  }
+})();
+
 </script>
 </body>
 </html>
