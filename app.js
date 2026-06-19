@@ -3,7 +3,7 @@
 const CONFIG = {
   supabaseUrl: 'https://tpteskmuuutobzkegors.supabase.co',
   supabaseKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRwdGVza211dXV0b2J6a2Vnb3JzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMDA2OTgsImV4cCI6MjA5NDg3NjY5OH0.6meW7ZwgSnIqv-rb3w7G5X-5GapjMCERacfUhhkc5hM',
-  vapidPublicKey: 'BJTXftjErgkU9Qgdfudu2wnpa52aH0r3h_X-xfZIxoJGOYGCfasNc5h6TF6lpR_a4iXK4KGVZBYRj4nZ7lpovu8',
+  vapidPublicKey: 'BH30i8o7XH-m6scXQXvICqgVzpBHATLfBjGfvwfUDDf_VjSxJylzSvojOgyvCSwMmSDzb5cxc6OlquyWzsr8qLQ',
   serverUrl: 'https://campaignweb-production.up.railway.app'
 };
 
