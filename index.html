@@ -39,6 +39,17 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;ove
 
 /* ════ WHATSAPP FLOAT ════ */
 .wa-float{position:fixed;bottom:28px;right:28px;z-index:8000;}
+
+/* ════ FLOATING ENABLE-NOTIFICATIONS BUTTON ════ */
+#notif-float{position:fixed;bottom:28px;left:20px;z-index:8000;background:var(--ink);color:#fff;border:none;border-radius:50px;padding:14px 20px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:700;letter-spacing:.5px;cursor:pointer;display:none;align-items:center;gap:8px;box-shadow:0 6px 24px rgba(0,0,0,.25);transition:transform .25s,opacity .25s;animation:notifPulse 2.6s ease-in-out infinite}
+#notif-float.show{display:flex}
+#notif-float:active{transform:scale(.96)}
+#notif-float .nf-dot{width:8px;height:8px;border-radius:50%;background:var(--gold);flex-shrink:0;animation:nfBlink 1.4s ease-in-out infinite}
+@keyframes notifPulse{0%,100%{box-shadow:0 6px 24px rgba(0,0,0,.25)}50%{box-shadow:0 6px 28px rgba(33,21,202,.45)}}
+@keyframes nfBlink{0%,100%{opacity:1}50%{opacity:.3}}
+@media(max-width:480px){
+  #notif-float{left:16px;bottom:20px;padding:13px 18px;font-size:12px}
+}
 .wa-bubble{width:58px;height:58px;background:#25D366;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 24px rgba(37,211,102,.35);transition:transform .25s cubic-bezier(.16,1,.3,1),box-shadow .25s;position:relative;flex-shrink:0}
 .wa-bubble:hover{transform:scale(1.1);box-shadow:0 8px 36px rgba(37,211,102,.5)}
 .wa-bubble svg{width:30px;height:30px;fill:#fff}
@@ -400,6 +411,12 @@ footer{background:var(--ink);padding:80px 48px 44px}
     <div id="m-fb"></div>
   </div>
 </div>
+
+<!-- ══════ FLOATING ENABLE-NOTIFICATIONS BUTTON ══════ -->
+<button id="notif-float" onclick="enableNotifFromFloat()">
+  <span class="nf-dot"></span>
+  <span id="notif-float-label">🔔 Enable Notifications</span>
+</button>
 
 <!-- ══════ MOBILE MENU ══════ -->
 <div class="mob-menu" id="mobMenu">
@@ -882,6 +899,11 @@ window.modalYes=async function(){
   if(em&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)){fb.textContent='↳ Please enter a valid email address.';return;}
   fb.textContent='Joining the movement...';fb.style.color='var(--gold-lo)';
 
+  // Remember contact info locally so the floating notif button can use it
+  // later without asking again, if push fails right now.
+  if(em)localStorage.setItem('arogs_email',em);
+  if(ph)localStorage.setItem('arogs_phone',ph);
+
   let pushSub=null;
   try{
     // 1. Register service worker
@@ -954,6 +976,99 @@ window.modalYes=async function(){
     document.getElementById('modal').classList.add('gone');
   }
 })();
+
+/* ── FLOATING ENABLE-NOTIFICATIONS BUTTON ──
+   Shows whenever someone has filled the modal (or visited before) but does
+   NOT have a real, active push subscription yet — regardless of whether
+   they tapped "Not Yet", dismissed the permission prompt, or it failed
+   silently (e.g. iOS not yet added to Home Screen). Stays floating until
+   notifications are actually enabled. */
+const notifFloat=document.getElementById('notif-float');
+const notifFloatLabel=document.getElementById('notif-float-label');
+
+async function refreshNotifFloat(){
+  if(!notifFloat)return;
+  // Don't nag if the browser straight up can't do push (e.g. very old browser)
+  const pushSupported='serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  if(!pushSupported){notifFloat.classList.remove('show');return;}
+  // Don't nag if iOS already permanently denied — nothing the button can do then
+  if(Notification.permission==='denied'){notifFloat.classList.remove('show');return;}
+
+  const active=await hasActiveSubscription();
+  if(active){
+    notifFloat.classList.remove('show');
+  }else{
+    notifFloat.classList.add('show');
+  }
+}
+
+window.enableNotifFromFloat=async function(){
+  if(!notifFloat)return;
+  notifFloatLabel.textContent='⏳ Enabling...';
+  notifFloat.disabled=true;
+
+  let em=localStorage.getItem('arogs_email')||'';
+  let ph=localStorage.getItem('arogs_phone')||'';
+
+  // If we somehow don't have contact info yet, just proceed without it —
+  // push doesn't strictly require email/phone, and we don't want a prompt()
+  // blocking the flow on mobile.
+  let pushSub=null;
+  try{
+    if('serviceWorker' in navigator){
+      const reg=await navigator.serviceWorker.register('/sw.js',{scope:'/'});
+      if(reg.installing||reg.waiting){
+        await new Promise(res=>{
+          const sw=reg.installing||reg.waiting;
+          sw.addEventListener('statechange',function h(e){if(e.target.state==='activated'){sw.removeEventListener('statechange',h);res();}});
+        });
+      }
+      if('Notification' in window){
+        const perm=await Notification.requestPermission();
+        if(perm==='granted'){
+          const existing=await reg.pushManager.getSubscription();
+          pushSub=existing||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_b64(_VAPID)});
+        }
+      }
+    }
+  }catch(swErr){console.error('[SW/Push float]',swErr);}
+
+  if(pushSub){
+    try{
+      const r=await fetch(`${_SERVER}/subscribe`,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({subscription:pushSub.toJSON(),email:em||null,phone:ph||null})
+      });
+      if(!r.ok)throw new Error(await r.text());
+    }catch(backendErr){
+      console.error('[Backend float]',backendErr);
+      try{
+        const rec={phone:ph||null,push_subscription:JSON.stringify(pushSub.toJSON()),joined_at:new Date().toISOString(),notifications_enabled:true};
+        if(em)rec.email=em;
+        await fetch(`${_SUPA_URL}/rest/v1/supporters`,{
+          method:'POST',
+          headers:{'Content-Type':'application/json','apikey':_SUPA_KEY,'Authorization':`Bearer ${_SUPA_KEY}`,'Prefer':'return=representation'},
+          body:JSON.stringify(rec)
+        });
+      }catch(supaErr){console.error('[Supabase fallback float]',supaErr);}
+    }
+    localStorage.setItem('arogs_j','1');
+    notifFloatLabel.textContent='✅ Notifications Enabled!';
+    showToast('You will now receive updates from Arogs!');
+    setTimeout(()=>notifFloat.classList.remove('show'),2200);
+  }else{
+    notifFloatLabel.textContent='⚠️ Tap to try again';
+  }
+  notifFloat.disabled=false;
+}
+
+// Check on load, whenever the tab/app regains focus, and on a slow interval —
+// covers the case where someone enables notifications from iOS Settings
+// directly while the app is still open in the background.
+refreshNotifFloat();
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshNotifFloat();});
+setInterval(refreshNotifFloat,15000);
 
 </script>
 </body>
